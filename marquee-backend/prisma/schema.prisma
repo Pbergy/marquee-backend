@@ -1,0 +1,104 @@
+// Marquee — event equipment rental marketplace
+// Data model covers: users (renters + hosts), listings, bookings, and payments.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  RENTER
+  HOST
+  BOTH
+}
+
+enum BookingStatus {
+  PENDING     // renter requested, awaiting host response, funds authorized
+  ACCEPTED    // host accepted, funds captured, dates hard-blocked
+  DECLINED    // host declined, funds released
+  CANCELLED   // renter or host cancelled after acceptance
+  COMPLETED   // event date has passed
+}
+
+enum Category {
+  TENTS
+  TABLES_CHAIRS
+  SOUND_LIGHTING
+  BOUNCE_HOUSES
+  DECOR
+}
+
+model User {
+  id                String   @id @default(cuid())
+  email             String   @unique
+  passwordHash      String
+  name              String
+  role              Role     @default(RENTER)
+  verified          Boolean  @default(false)
+  stripeCustomerId  String?  // for renters paying
+  stripeConnectId   String?  // for hosts receiving payouts (Stripe Connect Express account)
+  createdAt         DateTime @default(now())
+
+  listings          Listing[]  @relation("HostListings")
+  bookingsAsRenter  Booking[]  @relation("RenterBookings")
+}
+
+model Listing {
+  id             String    @id @default(cuid())
+  hostId         String
+  host           User      @relation("HostListings", fields: [hostId], references: [id])
+  title          String
+  category       Category
+  description    String
+  pricePerDay    Int       // stored in cents to avoid float rounding issues
+  deliveryFee    Int?      // cents, null if delivery not offered
+  neighborhood   String
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+
+  bookings       Booking[]
+}
+
+model Booking {
+  id             String        @id @default(cuid())
+  listingId      String
+  listing        Listing       @relation(fields: [listingId], references: [id])
+  renterId       String
+  renter         User          @relation("RenterBookings", fields: [renterId], references: [id])
+
+  startDate      DateTime
+  endDate        DateTime
+  quantity       Int           @default(1)
+  deliveryAdded  Boolean       @default(false)
+
+  subtotal       Int           // cents
+  serviceFee     Int           // cents — platform's cut
+  deliveryFee    Int           @default(0)
+  total          Int           // cents
+
+  status         BookingStatus @default(PENDING)
+  stripePaymentIntentId String?
+
+  createdAt      DateTime      @default(now())
+  respondedAt    DateTime?
+
+  messages       Message[]
+
+  @@index([listingId, startDate, endDate])
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  bookingId  String
+  booking    Booking  @relation(fields: [bookingId], references: [id])
+  senderId   String   // either the renter or the host on this booking
+  body       String
+  readAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([bookingId, createdAt])
+}
