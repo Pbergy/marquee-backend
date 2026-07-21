@@ -9,21 +9,38 @@ const bookingsRouter = require("./routes/bookings");
 const messagesRouter = require("./routes/messages");
 const authRouter = require("./routes/auth");
 
+// Stripe routes (added on stripe-connect branch)
+const stripeRouter = require("./routes/stripe");
+
 const app = express();
 app.use(cors());
-app.use(express.json());
 
+// Important: let the webhook path receive the raw body for Stripe signature verification.
+// Use express.json() for all routes except the webhook path.
+app.use((req, res, next) => {
+  if (req.originalUrl === "/stripe/webhook" || req.originalUrl === "/stripe/webhook/") return next();
+  express.json()(req, res, next);
+});
+
+// Raw body middleware for webhook verification (must be BEFORE the router that handles /stripe/webhook)
+app.post("/stripe/webhook", express.raw({ type: "application/json" }), (req, res, next) => {
+  // Save rawBody so the route can access it (the route expects req.rawBody)
+  req.rawBody = req.body;
+  next();
+});
+
+// Mount main API routes
 app.use("/auth", authRouter);
 app.use("/listings", listingsRouter);
 app.use("/bookings", bookingsRouter);
 app.use("/messages", messagesRouter);
 
+// Mount stripe routes (all other stripe endpoints expect normal JSON parsing)
+app.use("/stripe", stripeRouter);
+
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
-// Socket.io: messages are written via the normal REST route (POST /messages/:bookingId),
-// which then emits over this socket — so the API works fine even for clients that don't
-// use sockets, and connected clients just get pushed the new message instantly instead
-// of having to poll GET /messages/:bookingId on a timer.
+// Socket.io
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 app.set("io", io);
